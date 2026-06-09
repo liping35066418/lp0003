@@ -5,6 +5,7 @@
         <el-select v-model="statusFilter" placeholder="借用状态" clearable style="width:140px">
           <el-option label="借用中" value="borrowed" />
           <el-option label="已归还" value="returned" />
+          <el-option label="已逾期" value="overdue" />
         </el-select>
         <el-input v-model="keyword" placeholder="搜索借用人/装备名" clearable style="width:240px" @keyup.enter="loadData" />
         <el-button type="primary" @click="loadData"><el-icon><Search /></el-icon>搜索</el-button>
@@ -13,7 +14,7 @@
     </div>
 
     <div class="card" v-loading="loading">
-      <el-table :data="list" border stripe>
+      <el-table :data="list" border stripe :row-class-name="rowClassName">
         <el-table-column label="装备" min-width="180">
           <template #default="{ row }">
             <div style="display:flex;align-items:center;gap:10px">
@@ -44,7 +45,7 @@
         </el-table-column>
         <el-table-column label="应还日期" width="160">
           <template #default="{ row }">
-            <span v-if="row.due_date" :class="isOverdue(row) ? 'text-danger' : ''">{{ formatDate(row.due_date) }}</span>
+            <span v-if="row.due_date" :class="isOverdue(row) ? 'text-danger font-bold' : ''">{{ formatDate(row.due_date) }}</span>
             <span v-else class="text-muted">--</span>
           </template>
         </el-table-column>
@@ -56,17 +57,16 @@
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag v-if="row.status === 'borrowed'" :type="isOverdue(row) ? 'danger' : 'warning'">
-              {{ isOverdue(row) ? '已逾期' : '借用中' }}
-            </el-tag>
-            <el-tag v-else type="success">已归还</el-tag>
+            <el-tag v-if="row.status === 'returned'" type="success">已归还</el-tag>
+            <el-tag v-else-if="isOverdue(row)" type="danger">已逾期</el-tag>
+            <el-tag v-else type="warning">借用中</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.status === 'borrowed'"
+              v-if="row.status !== 'returned'"
               type="success" link size="small"
               @click="returnItem(row)"
             >登记归还</el-button>
@@ -172,7 +172,11 @@ function catIcon(c) {
 }
 function formatDate(d) { return d ? dayjs(d).format('YYYY-MM-DD HH:mm') : '' }
 function isOverdue(row) {
-  return row.status === 'borrowed' && row.due_date && dayjs().isAfter(dayjs(row.due_date))
+  return row.is_overdue || row.status === 'overdue' ||
+    (row.status === 'borrowed' && row.due_date && dayjs().isAfter(dayjs(row.due_date)))
+}
+function rowClassName({ row }) {
+  return isOverdue(row) ? 'overdue-row' : ''
 }
 
 function onEquipChange() {
@@ -255,5 +259,12 @@ onMounted(loadData)
   justify-content: center;
   font-size: 20px;
   flex-shrink: 0;
+}
+.font-bold { font-weight: 600; }
+:deep(.overdue-row) {
+  --el-table-tr-bg-color: #fff1f0 !important;
+}
+:deep(.overdue-row:hover > td) {
+  background-color: #ffecea !important;
 }
 </style>

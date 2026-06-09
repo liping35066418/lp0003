@@ -114,8 +114,13 @@ router.get('/loans', auth, (req, res) => {
   let params = [];
 
   if (status && status !== 'all') {
-    where.push('l.status = ?');
-    params.push(status);
+    if (status === 'overdue') {
+      where.push("(l.status = 'overdue' OR (l.status = 'borrowed' AND l.due_date IS NOT NULL AND l.due_date < ?))");
+      params.push(new Date().toISOString());
+    } else {
+      where.push('l.status = ?');
+      params.push(status);
+    }
   }
   if (equipmentId) {
     where.push('l.equipment_id = ?');
@@ -138,6 +143,14 @@ router.get('/loans', auth, (req, res) => {
     ORDER BY l.loan_date DESC
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, offset);
+
+  list.forEach(item => {
+    if (item.status === 'borrowed' && item.due_date && new Date(item.due_date) < new Date()) {
+      item.is_overdue = true;
+    } else {
+      item.is_overdue = item.status === 'overdue';
+    }
+  });
 
   success(res, { list, total, page, pageSize });
 });
@@ -169,6 +182,46 @@ router.post('/loans', auth, requireAdmin, (req, res) => {
   success(res, { id: result.lastInsertRowid }, '借用登记成功');
 });
 
+router.post('/loans/self', auth, (req, res) => {
+  const { equipmentId, activityId, quantity, dueDate, remark } = req.body;
+
+  if (!equipmentId) {
+    return error(res, '请选择要借用的装备');
+  }
+
+  const equipment = db().prepare('SELECT * FROM equipment WHERE id = ?').get(equipmentId);
+  if (!equipment) {
+    return error(res, '装备不存在');
+  }
+
+  const qty = quantity || 1;
+  if (qty < 1) {
+    return error(res, '借用数量必须大于0');
+  }
+  if (equipment.available_count < qty) {
+    return error(res, `可用数量不足，当前可用: ${equipment.available_count}`);
+  }
+
+  if (activityId) {
+    const reg = db().prepare(
+      "SELECT id FROM registrations WHERE activity_id = ? AND user_id = ? AND status = 'registered'"
+    ).get(activityId, req.user.id);
+    if (!reg) {
+      return error(res, '您未报名该活动，无法关联借用');
+    }
+  }
+
+  const loanDate = new Date().toISOString();
+  const result = db().prepare(`
+    INSERT INTO equipment_loans (equipment_id, user_id, activity_id, quantity, loan_date, due_date, remark)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(equipmentId, req.user.id, activityId || null, qty, loanDate, dueDate || null, remark || '');
+
+  db().prepare('UPDATE equipment SET available_count = available_count - ? WHERE id = ?').run(qty, equipmentId);
+
+  success(res, { id: result.lastInsertRowid }, '借用成功');
+});
+
 router.post('/loans/:id/return', auth, requireAdmin, (req, res) => {
   const loan = db().prepare('SELECT * FROM equipment_loans WHERE id = ?').get(req.params.id);
   if (!loan) {
@@ -188,6 +241,50 @@ router.post('/loans/:id/return', auth, requireAdmin, (req, res) => {
   db().prepare('UPDATE equipment SET available_count = available_count + ? WHERE id = ?').run(loan.quantity, loan.equipment_id);
 
   success(res, null, '归还登记成功');
+});
+
+router.post('/loans/:id/return-self', auth, (req, res) => {
+  const loan = db().prepare('SELECT * FROM equipment_loans WHERE id = ?').get(req.params.id);
+  if (!loan) {
+    return error(res, '借用记录不存在', 404);
+  }
+  if (loan.user_id !== req.user.id) {
+    return error(res, '您无权操作该借用记录', 403);
+  }
+  if (loan.status === 'returned') {
+    return error(res, '该装备已归还');
+  }
+
+  const returnDate = new Date().toISOString();
+
+  db().prepare(`
+    UPDATE equipment_loans SET status = 'returned', return_date = ?
+    WHERE id = ?
+  `).run(returnDate, req.params.id);
+
+  db().prepare('UPDATE equipment SET available_count = available_count + ? WHERE id = ?').run(loan.quantity, loan.equipment_id);
+
+  success(res, null, '归还成功');
+});
+
+router.get('/loans/activity/:activityId', auth, (req, res) => {
+  const rows = db().prepare(`
+    SELECT l.user_id, l.equipment_id, l.quantity, l.status, l.due_date,
+      e.name as equipment_name, e.category
+    FROM equipment_loans l
+    JOIN equipment e ON l.equipment_id = e.id
+    WHERE l.activity_id = ? AND l.status = 'borrowed'
+  `).all(req.params.activityId);
+
+  const userLoans = {};
+  rows.forEach(r => {
+    if (!userLoans[r.user_id]) {
+      userLoans[r.user_id] = [];
+    }
+    userLoans[r.user_id].push(r);
+  });
+
+  success(res, { userLoans });
 });
 
 router.get('/loans/mine', auth, (req, res) => {

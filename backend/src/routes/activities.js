@@ -56,6 +56,22 @@ router.get('/:id', auth, (req, res) => {
 
   activity.is_full = activity.registered_count >= activity.max_participants;
 
+  const now = new Date();
+  if (activity.status !== 'completed' && activity.end_date && new Date(activity.end_date) < now) {
+    db().prepare("UPDATE activities SET status = 'completed' WHERE id = ?").run(req.params.id);
+    activity.status = 'completed';
+    db().prepare(`
+      UPDATE equipment_loans
+      SET status = 'overdue'
+      WHERE activity_id = ? AND status = 'borrowed'
+    `).run(req.params.id);
+  } else if (activity.status !== 'completed' && activity.start_date && new Date(activity.start_date) < now && activity.end_date && new Date(activity.end_date) >= now) {
+    if (activity.status !== 'ongoing') {
+      db().prepare("UPDATE activities SET status = 'ongoing' WHERE id = ?").run(req.params.id);
+      activity.status = 'ongoing';
+    }
+  }
+
   const registrations = db().prepare(`
     SELECT r.*, u.name, u.phone, u.email
     FROM registrations r
@@ -63,6 +79,26 @@ router.get('/:id', auth, (req, res) => {
     WHERE r.activity_id = ? AND r.status = 'registered'
     ORDER BY r.registered_at ASC
   `).all(req.params.id);
+
+  const loanRows = db().prepare(`
+    SELECT l.user_id, l.equipment_id, l.quantity, l.status, l.due_date,
+      e.name as equipment_name, e.category
+    FROM equipment_loans l
+    JOIN equipment e ON l.equipment_id = e.id
+    WHERE l.activity_id = ? AND l.status IN ('borrowed', 'overdue')
+  `).all(req.params.id);
+
+  const userLoans = {};
+  loanRows.forEach(r => {
+    if (!userLoans[r.user_id]) {
+      userLoans[r.user_id] = [];
+    }
+    userLoans[r.user_id].push(r);
+  });
+
+  registrations.forEach(reg => {
+    reg.loans = userLoans[reg.user_id] || [];
+  });
 
   const photos = db().prepare(`
     SELECT p.*, u.name as uploader_name
@@ -157,6 +193,40 @@ router.get('/:id/participants', auth, requireAdmin, (req, res) => {
     WHERE r.activity_id = ? AND r.status = 'registered'
     ORDER BY r.registered_at ASC
   `).all(req.params.id);
+
+  const loanRows = db().prepare(`
+    SELECT l.user_id, l.equipment_id, l.quantity, l.status, l.due_date,
+      e.name as equipment_name, e.category
+    FROM equipment_loans l
+    JOIN equipment e ON l.equipment_id = e.id
+    WHERE l.activity_id = ? AND l.status IN ('borrowed', 'overdue')
+  `).all(req.params.id);
+
+  const userLoans = {};
+  loanRows.forEach(r => {
+    if (!userLoans[r.user_id]) {
+      userLoans[r.user_id] = [];
+    }
+    userLoans[r.user_id].push(r);
+  });
+
+  list.forEach(reg => {
+    reg.loans = userLoans[reg.user_id] || [];
+  });
+
+  success(res, { list });
+});
+
+router.get('/my/registered', auth, (req, res) => {
+  const now = new Date().toISOString();
+  const list = db().prepare(`
+    SELECT a.id, a.title, a.start_date, a.end_date, a.status
+    FROM registrations r
+    JOIN activities a ON r.activity_id = a.id
+    WHERE r.user_id = ? AND r.status = 'registered'
+      AND (a.end_date IS NULL OR a.end_date >= ?)
+    ORDER BY a.start_date ASC
+  `).all(req.user.id, now);
   success(res, { list });
 });
 

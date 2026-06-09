@@ -142,9 +142,30 @@
           <div v-else class="registrant-list">
             <div v-for="r in registrations" :key="r.id" class="registrant-item">
               <el-avatar :size="36" style="background:#10b981">{{ r.name?.charAt(0) }}</el-avatar>
-              <div class="registrant-info">
-                <div class="name">{{ r.name }}</div>
+              <div class="registrant-info" style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span class="name">{{ r.name }}</span>
+                  <el-tag
+                    v-if="r.loans && r.loans.length > 0"
+                    type="warning"
+                    size="small"
+                    effect="light"
+                  >
+                    🎒 已借装备 ×{{ r.loans.reduce((s, l) => s + l.quantity, 0) }}
+                  </el-tag>
+                </div>
                 <div class="text-muted" style="font-size:12px">{{ formatDate(r.registered_at) }}</div>
+                <div v-if="r.loans && r.loans.length > 0" class="loan-tags">
+                  <el-tag
+                    v-for="l in r.loans"
+                    :key="l.equipment_id"
+                    size="small"
+                    :type="l.status === 'overdue' ? 'danger' : 'info'"
+                    style="margin-top:4px"
+                  >
+                    {{ l.equipment_name }} ×{{ l.quantity }}
+                  </el-tag>
+                </div>
               </div>
             </div>
           </div>
@@ -184,7 +205,7 @@
       </el-form>
     </el-dialog>
 
-    <el-dialog v-model="showParticipants" title="参与名单与联系方式" width="800px">
+    <el-dialog v-model="showParticipants" title="参与名单与联系方式" width="900px">
       <el-table :data="registrations" border stripe>
         <el-table-column type="index" label="序号" width="60" />
         <el-table-column prop="name" label="姓名" width="100" />
@@ -192,6 +213,21 @@
         <el-table-column prop="email" label="邮箱" width="180" />
         <el-table-column prop="emergency_contact" label="紧急联系人" width="120" />
         <el-table-column prop="emergency_phone" label="紧急联系电话" width="140" />
+        <el-table-column label="借用装备" min-width="180">
+          <template #default="{ row }">
+            <div v-if="row.loans && row.loans.length > 0" style="display:flex;gap:4px;flex-wrap:wrap">
+              <el-tag
+                v-for="l in row.loans"
+                :key="l.equipment_id"
+                size="small"
+                :type="l.status === 'overdue' ? 'danger' : 'warning'"
+              >
+                {{ l.equipment_name }} ×{{ l.quantity }}
+              </el-tag>
+            </div>
+            <span v-else class="text-muted">--</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="registered_at" label="报名时间">
           <template #default="{ row }">{{ formatDate(row.registered_at) }}</template>
         </el-table-column>

@@ -40,6 +40,17 @@
               <span v-else-if="item.status === 'maintenance'" class="text-warning"><el-icon><Warning /></el-icon>维护中</span>
               <span v-else class="text-danger"><el-icon><CircleClose /></el-icon>已损坏</span>
             </div>
+            <div style="margin-top:14px">
+              <el-button
+                type="primary"
+                size="default"
+                style="width:100%"
+                :disabled="item.available_count <= 0 || item.status !== 'good'"
+                @click="openLoanDialog(item)"
+              >
+                <el-icon><Tickets /></el-icon>借用
+              </el-button>
+            </div>
           </div>
         </el-card>
       </el-col>
@@ -58,12 +69,63 @@
         @size-change="() => { page = 1; loadData() }"
       />
     </div>
+
+    <el-dialog v-model="showLoanDialog" :title="`借用 - ${currentEquipment?.name}`" width="520px">
+      <el-form :model="loanForm" :rules="loanRules" ref="loanFormRef" label-width="110px">
+        <el-form-item label="装备名称">
+          <span>{{ currentEquipment?.name }}（可用: {{ currentEquipment?.available_count }}）</span>
+        </el-form-item>
+        <el-form-item label="关联活动">
+          <el-select
+            v-model="loanForm.activityId"
+            filterable
+            clearable
+            placeholder="选择已报名的活动（选填）"
+            style="width:100%"
+          >
+            <el-option
+              v-for="a in registeredActivities"
+              :key="a.id"
+              :label="a.title"
+              :value="a.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="借用数量" prop="quantity">
+          <el-input-number
+            v-model="loanForm.quantity"
+            :min="1"
+            :max="currentEquipment?.available_count || 1"
+            style="width:100%"
+          />
+        </el-form-item>
+        <el-form-item label="预计归还" prop="dueDate">
+          <el-date-picker
+            v-model="loanForm.dueDate"
+            type="date"
+            style="width:100%"
+            :disabled-date="disabledDate"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            :placeholder="'选择归还日期（选填）'"
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="loanForm.remark" type="textarea" :rows="2" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showLoanDialog = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitLoan">确认借用</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
+import dayjs from 'dayjs'
 
 const list = ref([])
 const total = ref(0)
@@ -72,6 +134,23 @@ const pageSize = ref(12)
 const categoryFilter = ref('')
 const keyword = ref('')
 const loading = ref(false)
+
+const showLoanDialog = ref(false)
+const loanFormRef = ref()
+const currentEquipment = ref(null)
+const registeredActivities = ref([])
+const submitting = ref(false)
+
+const defaultLoanForm = () => ({
+  activityId: null,
+  quantity: 1,
+  dueDate: '',
+  remark: ''
+})
+const loanForm = reactive(defaultLoanForm())
+const loanRules = {
+  quantity: [{ required: true, message: '请输入借用数量', trigger: 'blur' }]
+}
 
 const categories = ['防护装备', '照明设备', '维修工具', '医疗用品', '通信设备', '其他']
 
@@ -97,6 +176,42 @@ function catIcon(c) {
 }
 function catClass(c) {
   return 'cat-' + ({ '防护装备': 'green', '照明设备': 'yellow', '维修工具': 'blue', '医疗用品': 'red' }[c] || 'gray')
+}
+
+function disabledDate(time) {
+  return time.getTime() < Date.now() - 8.64e7
+}
+
+async function openLoanDialog(item) {
+  currentEquipment.value = item
+  Object.assign(loanForm, defaultLoanForm())
+  try {
+    const res = await request.get('/api/activities/my/registered')
+    registeredActivities.value = res.data.list || []
+  } catch (e) {
+    registeredActivities.value = []
+  }
+  showLoanDialog.value = true
+}
+
+async function submitLoan() {
+  await loanFormRef.value.validate()
+  if (!currentEquipment.value) return
+  submitting.value = true
+  try {
+    await request.post('/api/equipment/loans/self', {
+      equipmentId: currentEquipment.value.id,
+      activityId: loanForm.activityId || undefined,
+      quantity: loanForm.quantity,
+      dueDate: loanForm.dueDate || undefined,
+      remark: loanForm.remark || undefined
+    })
+    ElMessage.success('借用成功')
+    showLoanDialog.value = false
+    loadData()
+  } finally {
+    submitting.value = false
+  }
 }
 
 onMounted(loadData)

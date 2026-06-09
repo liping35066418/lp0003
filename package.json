@@ -1,0 +1,18 @@
+{
+  "name": "cycling-club-system",
+  "version": "1.0.0",
+  "description": "户外骑行俱乐部管理系统 - 完整前后端项目",
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently -n BACKEND,FRONTEND -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build:frontend": "cd frontend && npm run build",
+    "start:backend": "cd backend && npm start",
+    "start:preview": "cd frontend && npm run preview",
+    "start": "concurrently -n BACKEND,FRONTEND -c blue,green \"npm run start:backend\" \"npm run start:preview\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

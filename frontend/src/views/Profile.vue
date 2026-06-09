@@ -21,6 +21,22 @@
               <div class="stat-value">{{ stats.borrowingCount }}</div>
               <div class="stat-label">借用中</div>
             </div>
+            <div class="stat-item points">
+              <div class="stat-value">{{ stats.totalPoints }}</div>
+              <div class="stat-label">总积分</div>
+            </div>
+          </div>
+          <div class="rank-banner">
+            <div class="rank-left">
+              <span class="rank-icon">🏆</span>
+              <div>
+                <div class="rank-label">当前积分排名</div>
+                <div class="rank-value">
+                  {{ stats.rank > 0 ? `第 ${stats.rank} 名` : '暂无排名' }}
+                  <span v-if="stats.rank > 0" class="rank-total">/ 共 {{ stats.totalMembers }} 位成员</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -42,7 +58,7 @@
       </el-col>
 
       <el-col :xs="24" :md="16">
-        <div class="card">
+        <div class="card mb-20">
           <div class="flex-between mb-20">
             <h3 class="section-title" style="margin:0"><el-icon><Edit /></el-icon>个人信息</h3>
             <el-button v-if="!editing" type="primary" size="small" @click="editing = true">编辑</el-button>
@@ -86,6 +102,56 @@
             </el-row>
           </el-form>
         </div>
+
+        <div class="card">
+          <div class="flex-between mb-20">
+            <h3 class="section-title" style="margin:0">
+              <el-icon><Trophy /></el-icon>我的积分记录
+              <el-tag size="small" type="warning" effect="plain" style="margin-left:10px">
+                🏆 累计 {{ stats.totalPoints }} 分
+              </el-tag>
+            </h3>
+          </div>
+          <div v-loading="pointsLoading">
+            <el-empty v-if="pointsList.length === 0 && !pointsLoading" description="暂无积分记录，多参加活动就能获得积分哦～" />
+            <el-table v-else :data="pointsList" border stripe size="small">
+              <el-table-column label="时间" width="160">
+                <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="类型" width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.type === 'activity'" type="primary" size="small">活动</el-tag>
+                  <el-tag v-else-if="row.type === 'manual'" type="warning" size="small">手动</el-tag>
+                  <el-tag v-else type="info" size="small">其他</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="积分" width="100" align="center">
+                <template #default="{ row }">
+                  <span :style="{ color: row.points >= 0 ? '#67c23a' : '#f56c6c', fontWeight: 700, fontSize: '15px' }">
+                    {{ row.points >= 0 ? '+' : '' }}{{ row.points }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="说明" min-width="220">
+                <template #default="{ row }">
+                  <span>{{ row.reason || '-' }}</span>
+                  <el-tag v-if="row.activity_title" size="small" type="info" effect="plain" style="margin-left:8px">
+                    📋 {{ row.activity_title }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="mt-20 flex-center">
+              <el-pagination
+                v-model:current-page="pointsPage"
+                v-model:page-size="pointsPageSize"
+                :total="pointsTotal"
+                layout="total, prev, pager, next"
+                @current-change="loadPoints"
+              />
+            </div>
+          </div>
+        </div>
       </el-col>
     </el-row>
   </div>
@@ -96,6 +162,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
 import request from '../utils/request'
+import dayjs from 'dayjs'
 
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.isAdmin)
@@ -105,7 +172,16 @@ const editing = ref(false)
 const saving = ref(false)
 const pwdLoading = ref(false)
 
-const stats = reactive({ activityCount: 0, borrowingCount: 0 })
+const stats = reactive({
+  activityCount: 0, borrowingCount: 0,
+  totalPoints: 0, rank: 0, totalMembers: 0
+})
+
+const pointsList = ref([])
+const pointsPage = ref(1)
+const pointsPageSize = ref(8)
+const pointsTotal = ref(0)
+const pointsLoading = ref(false)
 
 const profileForm = reactive({
   username: '', name: '', phone: '', email: '',
@@ -131,6 +207,8 @@ const pwdRules = {
   ]
 }
 
+function formatDate(d) { return dayjs(d).format('YYYY-MM-DD HH:mm') }
+
 async function loadProfile() {
   try {
     const u = await userStore.fetchProfile()
@@ -142,7 +220,25 @@ async function loadProfile() {
     stats.activityCount = res.data.total
     const loanRes = await request.get('/api/equipment/loans/mine')
     stats.borrowingCount = loanRes.data.list.filter(l => l.status === 'borrowed').length
+    await loadPoints()
+    const lbRes = await request.get('/api/points/leaderboard', { params: { limit: 10 } })
+    stats.rank = lbRes.data.myRank || 0
   } catch(e) {}
+}
+
+async function loadPoints() {
+  pointsLoading.value = true
+  try {
+    const res = await request.get('/api/points/mine', {
+      params: { page: pointsPage.value, pageSize: pointsPageSize.value }
+    })
+    pointsList.value = res.data.list
+    pointsTotal.value = res.data.total
+    stats.totalPoints = res.data.totalPoints
+    stats.rank = res.data.rank
+  } catch (e) {} finally {
+    pointsLoading.value = false
+  }
 }
 
 function cancelEdit() {
@@ -217,10 +313,15 @@ onMounted(loadProfile)
 .profile-stats {
   display: flex;
   justify-content: space-around;
-  padding: 10px 0;
+  padding: 10px 0 20px 0;
+  border-bottom: 1px dashed #e5e7eb;
+  margin-bottom: 16px;
 }
 .stat-item {
   text-align: center;
+}
+.stat-item.points .stat-value {
+  color: #d97706;
 }
 .stat-value {
   font-size: 28px;
@@ -232,6 +333,36 @@ onMounted(loadProfile)
   color: #9ca3af;
   margin-top: 4px;
 }
+.rank-banner {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-radius: 12px;
+  text-align: left;
+}
+.rank-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rank-icon {
+  font-size: 36px;
+  flex-shrink: 0;
+}
+.rank-label {
+  font-size: 12px;
+  color: #92400e;
+  margin-bottom: 3px;
+}
+.rank-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #92400e;
+}
+.rank-total {
+  font-size: 12px;
+  font-weight: 500;
+  color: #b45309;
+}
 .section-title {
   font-size: 16px;
   font-weight: 600;
@@ -241,4 +372,12 @@ onMounted(loadProfile)
   align-items: center;
   gap: 8px;
 }
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mt-20 { margin-top: 20px; }
 </style>

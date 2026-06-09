@@ -13,6 +13,7 @@ const userRoutes = require('./src/routes/users');
 const photoRoutes = require('./src/routes/photos');
 const statsRoutes = require('./src/routes/stats');
 const uploadRoutes = require('./src/routes/upload');
+const pointRoutes = require('./src/routes/points');
 
 const app = express();
 const PORT = process.env.PORT || 8603;
@@ -38,6 +39,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/photos', photoRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/points', pointRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: '骑行俱乐部管理系统服务正常运行' });

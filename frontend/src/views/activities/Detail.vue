@@ -99,27 +99,136 @@
           </div>
         </div>
 
-        <div class="card mb-20">
-          <div class="flex-between mb-20">
-            <h3 class="section-title" style="margin:0"><el-icon><Picture /></el-icon>活动相册</h3>
-            <el-button v-if="isAdmin" type="primary" size="small" @click="showPhotoDialog = true">
-              <el-icon><Plus /></el-icon>上传照片
-            </el-button>
-          </div>
-          <el-empty v-if="photos.length === 0" description="暂无照片" />
-          <div v-else class="photo-grid">
-            <div v-for="p in photos" :key="p.id" class="photo-item">
-              <img :src="p.image_url" :alt="p.title" @click="previewPhoto(p.image_url)" />
-              <div class="photo-meta">
-                <span v-if="p.title">{{ p.title }}</span>
-                <span class="text-muted">{{ formatDate(p.created_at) }}</span>
+        <el-tabs v-model="activeTab" class="detail-tabs mb-20 card">
+          <el-tab-pane name="photos">
+            <template #label>
+              <span class="tab-label"><el-icon><Picture /></el-icon>活动相册 ({{ photoStats.totalCount || 0 }})</span>
+            </template>
+
+            <div class="photo-toolbar">
+              <div class="toolbar-left">
+                <div class="stat-tags">
+                  <el-tag type="info" effect="plain">
+                    📷 共 {{ photoStats.totalCount || 0 }} 张照片
+                  </el-tag>
+                  <el-tag type="success" effect="plain">
+                    📸 摄影师 {{ photoStats.photographerCount || 0 }} 位
+                  </el-tag>
+                </div>
+                <el-select v-model="filterUploader" placeholder="按上传者筛选" size="default" clearable style="width:180px" @change="loadPhotos">
+                  <el-option label="全部摄影师" value="all" />
+                  <el-option
+                    v-for="up in photoStats.uploaders || []"
+                    :key="up.user_id"
+                    :label="up.uploader_name || '未命名'"
+                    :value="String(up.user_id)"
+                  />
+                </el-select>
               </div>
-              <el-button v-if="isAdmin" class="del-btn" type="danger" size="small" circle @click.stop="deletePhoto(p)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+              <div class="toolbar-right">
+                <el-button type="primary" size="default" @click="showPhotoDialog = true">
+                  <el-icon><Plus /></el-icon>上传照片
+                </el-button>
+              </div>
             </div>
-          </div>
-        </div>
+
+            <el-empty v-if="photos.length === 0" description="暂无照片" />
+            <div v-else class="photo-grid">
+              <div v-for="p in photos" :key="p.id" class="photo-item">
+                <img :src="p.image_url" :alt="p.title" @click="previewPhoto(p.image_url)" />
+                <div class="photo-meta">
+                  <div class="uploader-row">
+                    <el-avatar :size="20" style="background:#3b82f6;font-size:11px">{{ (p.uploader_name || '?').charAt(0) }}</el-avatar>
+                    <span class="uploader-name">{{ p.uploader_name || '未命名' }}</span>
+                  </div>
+                  <div class="photo-desc">
+                    <span v-if="p.title">{{ p.title }}</span>
+                    <span v-if="p.title && p.description"> · </span>
+                    <span v-if="p.description">{{ p.description }}</span>
+                  </div>
+                  <span class="text-muted">{{ formatDate(p.created_at) }}</span>
+                </div>
+                <el-button
+                  v-if="isAdmin || p.user_id === currentUserId"
+                  class="del-btn" type="danger" size="small" circle @click.stop="deletePhoto(p)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane name="reviews">
+            <template #label>
+              <span class="tab-label">
+                <el-icon><Star /></el-icon>活动评价
+                <span v-if="reviews.length" class="rating-badge">
+                  <el-rate :model-value="Number(avgRating)" disabled size="small" style="margin:0 6px" />
+                  <strong>{{ avgRating }}</strong> ({{ reviews.length }})
+                </span>
+              </span>
+            </template>
+
+            <div v-if="canReview" class="review-form card-inner">
+              <h4 class="review-subtitle">
+                <el-icon><Edit /></el-icon>
+                {{ userReview ? '修改我的评价' : '发表评价' }}
+              </h4>
+              <div class="review-form-row">
+                <span class="rate-label">评分：</span>
+                <el-rate v-model="reviewForm.rating" size="large" />
+                <span class="rate-text">{{ rateText }}</span>
+              </div>
+              <el-input
+                v-model="reviewForm.content"
+                type="textarea"
+                :rows="3"
+                placeholder="分享你的活动体验和感受..."
+                maxlength="500"
+                show-word-limit
+              />
+              <div class="review-actions">
+                <el-button type="primary" :loading="submittingReview" @click="submitReview">
+                  {{ userReview ? '更新评价' : '提交评价' }}
+                </el-button>
+              </div>
+            </div>
+            <div v-else-if="activity.status !== 'completed'" class="review-tip">
+              <el-icon><InfoFilled /></el-icon> 活动结束后参与成员即可发表评价
+            </div>
+            <div v-else class="review-tip">
+              <el-icon><Warning /></el-icon> 仅参与过本活动的成员可以评价
+            </div>
+
+            <div v-if="reviews.length === 0" class="empty-reviews">
+              <el-empty description="暂无评价，来抢沙发吧～" />
+            </div>
+            <div v-else class="review-list">
+              <div v-for="r in reviews" :key="r.id" class="review-item">
+                <div class="review-header">
+                  <el-avatar :size="36" style="background:#10b981">{{ (r.user_name || 'U').charAt(0) }}</el-avatar>
+                  <div class="review-user">
+                    <div class="review-name">
+                      {{ r.user_name }}
+                      <el-tag v-if="r.user_id === currentUserId" size="small" type="info" effect="plain">我</el-tag>
+                    </div>
+                    <div class="review-meta">
+                      <el-rate :model-value="r.rating" disabled size="small" />
+                      <span class="review-date">{{ formatDate(r.created_at) }}</span>
+                    </div>
+                  </div>
+                  <el-button
+                    v-if="isAdmin || r.user_id === currentUserId"
+                    type="danger" link size="small"
+                    @click="deleteReview(r)"
+                  >删除</el-button>
+                </div>
+                <div class="review-content" v-if="r.content">{{ r.content }}</div>
+                <div class="review-content empty" v-else>该用户只打了分～</div>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
 
       <div class="side-col">
@@ -181,21 +290,34 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showPhotoDialog" title="上传照片" width="500px">
-      <el-upload
-        class="photo-uploader"
-        action="/api/upload/image?dir=photos"
-        :headers="uploadHeaders"
-        :show-file-list="false"
-        :on-success="handlePhotoUploaded"
-        accept="image/*"
-      >
-        <div class="upload-area">
-          <el-icon :size="40" color="#909399"><Plus /></el-icon>
-          <div class="text-muted">点击上传照片</div>
-        </div>
-      </el-upload>
-      <el-form class="mt-20" label-width="80px">
+    <el-dialog v-model="showPhotoDialog" title="上传活动照片" width="600px" @close="resetPhotoForm">
+      <el-alert
+        title="提示：所有成员都可以上传自己拍的活动照片，管理员会审核质量哦～"
+        type="info" :closable="false" show-icon style="margin-bottom:16px"
+      />
+      <div class="batch-upload-area">
+        <el-upload
+          ref="uploadRef"
+          class="photo-batch-uploader"
+          action="/api/upload/image?dir=photos"
+          :headers="uploadHeaders"
+          multiple
+          :show-file-list="true"
+          :auto-upload="false"
+          :on-change="onFileChange"
+          :on-remove="onFileRemove"
+          :file-list="photoFiles"
+          list-type="picture-card"
+          accept="image/*"
+          :limit="20"
+        >
+          <el-icon :size="24" color="#909399"><Plus /></el-icon>
+        </el-upload>
+      </div>
+      <div class="upload-tip text-muted" style="margin-top:8px">
+        * 一次最多上传20张，每张照片会自动记录你为上传者
+      </div>
+      <el-form class="mt-20" label-width="80px" v-if="photoFiles.length > 0 && photoFiles.length < 2">
         <el-form-item label="标题">
           <el-input v-model="photoForm.title" placeholder="照片标题（选填）" />
         </el-form-item>
@@ -203,6 +325,12 @@
           <el-input v-model="photoForm.description" type="textarea" :rows="3" placeholder="照片描述（选填）" />
         </el-form-item>
       </el-form>
+      <template #footer>
+        <el-button @click="showPhotoDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingPhoto" :disabled="photoFiles.length === 0" @click="savePhotos">
+          <el-icon><Upload /></el-icon>上传 {{ photoFiles.length }} 张照片
+        </el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="showParticipants" title="参与名单与联系方式" width="900px">
@@ -243,7 +371,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '../../stores/user'
@@ -257,21 +385,43 @@ const activity = ref(null)
 const registrations = ref([])
 const updates = ref([])
 const photos = ref([])
+const reviews = ref([])
+const avgRating = ref(0)
+const userReview = ref(null)
+const photoStats = reactive({ totalCount: 0, photographerCount: 0, uploaders: [] })
 const checkStatus = ref({ registered: false })
 const loading = ref(false)
 const registering = ref(false)
 const isAdmin = computed(() => userStore.isAdmin)
+const currentUserId = computed(() => userStore.user?.id)
 
 const showUpdateDialog = ref(false)
 const updateContent = ref('')
 const publishing = ref(false)
 
+const activeTab = ref('photos')
+const filterUploader = ref('all')
 const showPhotoDialog = ref(false)
-const photoForm = ref({ title: '', description: '', imageUrl: '' })
+const photoForm = reactive({ title: '', description: '' })
+const photoFiles = ref([])
+const savingPhoto = ref(false)
+const uploadRef = ref()
+
 const showViewer = ref(false)
 const previewUrl = ref('')
 
 const showParticipants = ref(false)
+
+const submittingReview = ref(false)
+const reviewForm = reactive({ rating: 5, content: '' })
+
+const rateText = computed(() => ({
+  1: '很差', 2: '一般', 3: '还行', 4: '很好', 5: '超赞'
+}[reviewForm.rating] || ''))
+
+const canReview = computed(() =>
+  activity.value?.status === 'completed' && checkStatus.value?.registered
+)
 
 const uploadHeaders = computed(() => ({
   Authorization: `Bearer ${userStore.token}`
@@ -312,7 +462,15 @@ async function loadDetail() {
     registrations.value = res.data.registrations || []
     photos.value = res.data.photos || []
     updates.value = res.data.updates || []
+    reviews.value = res.data.reviews || []
+    avgRating.value = res.data.avgRating || 0
+    userReview.value = res.data.userReview
+    if (userReview.value) {
+      reviewForm.rating = userReview.value.rating
+      reviewForm.content = userReview.value.content || ''
+    }
     await loadRegisterStatus()
+    await loadPhotos()
     if (isAdmin.value) {
       const partRes = await request.get(`/api/activities/${route.params.id}/participants`)
       registrations.value = partRes.data.list
@@ -320,6 +478,18 @@ async function loadDetail() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadPhotos() {
+  try {
+    const res = await request.get(`/api/photos/activity/${route.params.id}`, {
+      params: { uploaderId: filterUploader.value }
+    })
+    photos.value = res.data.list
+    photoStats.totalCount = res.data.totalCount
+    photoStats.photographerCount = res.data.photographerCount
+    photoStats.uploaders = res.data.uploaders || []
+  } catch (e) {}
 }
 
 async function loadRegisterStatus() {
@@ -378,30 +548,54 @@ async function publishUpdate() {
   }
 }
 
-function handlePhotoUploaded(res) {
-  if (res.code === 200) {
-    photoForm.value.imageUrl = res.data.url
-    savePhoto()
+function onFileChange(file) {
+  if (!photoFiles.value.find(f => f.uid === file.uid)) {
+    photoFiles.value.push(file)
   }
 }
+function onFileRemove(file) {
+  photoFiles.value = photoFiles.value.filter(f => f.uid !== file.uid)
+}
+function resetPhotoForm() {
+  photoFiles.value = []
+  photoForm.title = ''
+  photoForm.description = ''
+}
 
-async function savePhoto() {
-  if (!photoForm.value.imageUrl) {
-    ElMessage.warning('请先上传图片')
+async function savePhotos() {
+  if (photoFiles.value.length === 0) {
+    ElMessage.warning('请先选择照片')
     return
   }
+  savingPhoto.value = true
   try {
-    await request.post('/api/photos', {
-      activityId: route.params.id,
-      title: photoForm.value.title,
-      description: photoForm.value.description,
-      imageUrl: photoForm.value.imageUrl
-    })
-    ElMessage.success('照片已添加')
+    let successCount = 0
+    for (const file of photoFiles.value) {
+      try {
+        const formData = new FormData()
+        formData.append('file', file.raw || file)
+        const uploadRes = await request.post('/api/upload/image?dir=photos', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        if (uploadRes.code === 200) {
+          await request.post('/api/photos', {
+            activityId: route.params.id,
+            title: photoFiles.value.length === 1 ? photoForm.title : file.name,
+            description: photoFiles.value.length === 1 ? photoForm.description : '',
+            imageUrl: uploadRes.data.url
+          })
+          successCount++
+        }
+      } catch (e) {}
+    }
+    ElMessage.success(`成功上传 ${successCount} 张照片`)
     showPhotoDialog.value = false
-    photoForm.value = { title: '', description: '', imageUrl: '' }
+    resetPhotoForm()
+    await loadPhotos()
     await loadDetail()
-  } catch(e) {}
+  } finally {
+    savingPhoto.value = false
+  }
 }
 
 async function deletePhoto(p) {
@@ -409,7 +603,7 @@ async function deletePhoto(p) {
     await ElMessageBox.confirm('确定删除这张照片吗？', '提示', { type: 'warning' })
     await request.delete(`/api/photos/${p.id}`)
     ElMessage.success('已删除')
-    photos.value = photos.value.filter(x => x.id !== p.id)
+    await loadPhotos()
   } catch(e) {}
 }
 
@@ -418,8 +612,32 @@ function previewPhoto(url) {
   showViewer.value = true
 }
 
+async function submitReview() {
+  try {
+    await request.post(`/api/activities/${route.params.id}/reviews`, {
+      rating: reviewForm.rating,
+      content: reviewForm.content
+    })
+    ElMessage.success(userReview.value ? '评价已更新' : '评价已提交')
+    await loadDetail()
+  } catch (e) {}
+}
+
+async function deleteReview(r) {
+  try {
+    await ElMessageBox.confirm('确定删除这条评价吗？', '提示', { type: 'warning' })
+    await request.delete(`/api/activities/${route.params.id}/reviews/${r.id}`)
+    ElMessage.success('评价已删除')
+    await loadDetail()
+  } catch (e) {}
+}
+
 watch(() => route.params.id, () => {
   if (route.params.id) loadDetail()
+})
+
+watch(filterUploader, () => {
+  loadPhotos()
 })
 
 onMounted(loadDetail)
@@ -592,34 +810,117 @@ onMounted(loadDetail)
   background: #f9fafb;
   border-radius: 8px;
 }
+
+.detail-tabs {
+  padding: 0 !important;
+}
+.detail-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid #eef2f7;
+}
+.detail-tabs :deep(.el-tabs__content) {
+  padding: 20px;
+}
+.tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+}
+.rating-badge {
+  display: inline-flex;
+  align-items: center;
+  color: #6b7280;
+  font-size: 13px;
+  margin-left: 4px;
+}
+
+.photo-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: #f9fafb;
+  border-radius: 10px;
+}
+.toolbar-left {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.stat-tags { display: flex; gap: 8px; }
+
 .photo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
 }
 .photo-item {
   position: relative;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  transition: all 0.2s;
+}
+.photo-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
 }
 .photo-item img {
   width: 100%;
-  height: 140px;
+  height: 160px;
   object-fit: cover;
   display: block;
 }
 .photo-meta {
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: 12px;
   color: #6b7280;
-  background: #f9fafb;
+  background: #fafafa;
+}
+.uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.uploader-name {
+  color: #374151;
+  font-weight: 500;
+  font-size: 13px;
+}
+.photo-desc {
+  margin-bottom: 4px;
+  color: #4b5563;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .del-btn {
   position: absolute;
   top: 8px;
   right: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
+
+.batch-upload-area {
+  background: #fafafa;
+  padding: 16px;
+  border-radius: 10px;
+}
+.photo-batch-uploader :deep(.el-upload--picture-card) {
+  width: 110px;
+  height: 110px;
+  line-height: 110px;
+}
+
 .creator-info {
   display: flex;
   gap: 14px;
@@ -644,21 +945,96 @@ onMounted(loadDetail)
   font-weight: 500;
   color: #374151;
 }
-.upload-area {
-  width: 100%;
-  height: 200px;
-  border: 2px dashed #dcdfe6;
+
+.review-form {
+  margin-bottom: 24px;
+}
+.card-inner {
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #fdf2f8 100%);
+  border-radius: 12px;
+  border: 1px solid #e0f2fe;
+}
+.review-subtitle {
+  margin: 0 0 14px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.review-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.rate-label { color: #374151; font-size: 14px; }
+.rate-text { color: #f59e0b; font-weight: 500; font-size: 14px; }
+.review-actions { margin-top: 12px; text-align: right; }
+
+.review-tip {
+  padding: 14px 16px;
+  background: #f9fafb;
   border-radius: 8px;
+  color: #6b7280;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.empty-reviews {
+  padding: 30px 0;
+}
+.review-list {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  cursor: pointer;
-  transition: border-color 0.2s;
+  gap: 16px;
 }
-.upload-area:hover { border-color: #409eff; }
-.photo-uploader { width: 100%; }
+.review-item {
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 10px;
+  border: 1px solid #eef2f7;
+}
+.review-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.review-user { flex: 1; min-width: 0; }
+.review-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.review-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.review-date { color: #9ca3af; }
+.review-content {
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 10px 12px;
+  background: #fff;
+  border-radius: 8px;
+}
+.review-content.empty {
+  color: #9ca3af;
+  font-style: italic;
+}
 
 @media (max-width: 900px) {
   .header-content { flex-direction: column; }

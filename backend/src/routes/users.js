@@ -36,10 +36,12 @@ router.get('/', auth, requireAdmin, (req, res) => {
     const stats = db().prepare(`
       SELECT
         (SELECT COUNT(*) FROM registrations WHERE user_id = ? AND status = 'registered') as activity_count,
-        (SELECT COUNT(*) FROM equipment_loans WHERE user_id = ? AND status = 'borrowed') as borrowing_count
-    `).get(user.id, user.id);
+        (SELECT COUNT(*) FROM equipment_loans WHERE user_id = ? AND status = 'borrowed') as borrowing_count,
+        (SELECT COALESCE(SUM(points), 0) FROM user_points WHERE user_id = ?) as total_points
+    `).get(user.id, user.id, user.id);
     user.activity_count = stats.activity_count;
     user.borrowing_count = stats.borrowing_count;
+    user.total_points = stats.total_points;
   });
 
   success(res, { list, total, page, pageSize });

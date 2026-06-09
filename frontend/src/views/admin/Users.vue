@@ -37,21 +37,11 @@
             <span v-else class="text-muted">--</span>
           </template>
         </el-table-column>
-        <el-table-column label="紧急联系人" width="260">
+        <el-table-column label="累计积分" width="110" align="center" sortable="custom" :sort-orders="['ascending', 'descending']" @sort-change="handlePointSort">
           <template #default="{ row }">
-            <div v-if="row.emergency_contact || row.emergency_phone">
-              <span>{{ row.emergency_contact || '未填' }}</span>
-              <span v-if="row.emergency_phone" style="color:#6b7280;margin-left:8px">{{ row.emergency_phone }}</span>
-            </div>
-            <span v-else class="text-muted">--</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="角色" width="100">
-          <template #default="{ row }">
-            <el-select v-model="row.role" size="small" @change="updateRole(row)">
-              <el-option label="管理员" value="admin" />
-              <el-option label="普通成员" value="member" />
-            </el-select>
+            <el-tag type="warning" effect="dark" size="small">
+              🏆 {{ row.total_points || 0 }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="活动" width="80" align="center" prop="activity_count">
@@ -68,8 +58,9 @@
         <el-table-column label="注册时间" width="160">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="openPointsDialog(row)">积分明细</el-button>
             <el-button type="primary" link size="small" @click="openDialog(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="deleteItem(row)" :disabled="row.id === currentUserId">删除</el-button>
           </template>
@@ -140,6 +131,79 @@
         <el-button type="primary" :loading="saving" @click="saveItem">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showPointsDialog" :title="`${selectedUser?.name || ''} - 积分明细`" width="720px">
+      <div class="points-summary">
+        <div class="points-card total">
+          <div class="points-label">累计积分</div>
+          <div class="points-value">🏆 {{ pointsTotal || 0 }}</div>
+        </div>
+        <div class="points-card add">
+          <el-button type="warning" size="small" @click="showAddPointsDialog = true">
+            <el-icon><Plus /></el-icon>手动加分
+          </el-button>
+        </div>
+      </div>
+
+      <div v-loading="pointsLoading" style="min-height:300px">
+        <el-empty v-if="pointsList.length === 0 && !pointsLoading" description="暂无积分记录" />
+        <el-table v-else :data="pointsList" border stripe size="small">
+          <el-table-column label="时间" width="160">
+            <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.type === 'activity'" type="primary" size="small">活动</el-tag>
+              <el-tag v-else type="warning" size="small">手动</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="积分变化" width="100">
+            <template #default="{ row }">
+              <span :style="{ color: row.points >= 0 ? '#67c23a' : '#f56c6c', fontWeight: 600 }">
+                {{ row.points >= 0 ? '+' : '' }}{{ row.points }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="200">
+            <template #default="{ row }">
+              {{ row.reason || '-' }}
+              <el-tag v-if="row.activity_title" size="small" type="info" effect="plain" style="margin-left:6px">
+                📋 {{ row.activity_title }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="mt-16 flex-center">
+          <el-pagination
+            v-model:current-page="pointsPage"
+            v-model:page-size="pointsPageSize"
+            :total="pointsTotalCount"
+            layout="total, prev, pager, next"
+            @current-change="loadPoints"
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button type="primary" @click="showPointsDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showAddPointsDialog" title="手动调整积分" width="460px">
+      <el-form label-width="80px">
+        <el-form-item label="调整积分">
+          <el-input-number v-model="addPointsForm.points" :min="1" :max="10000" />
+          <span class="text-muted" style="margin-left:10px;font-size:12px">填入正数为加分，建议1-100</span>
+        </el-form-item>
+        <el-form-item label="原因说明">
+          <el-input v-model="addPointsForm.reason" type="textarea" :rows="3" placeholder="请说明加分原因（如：优秀贡献、志愿活动等）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddPointsDialog = false">取消</el-button>
+        <el-button type="primary" :loading="addingPoints" @click="submitAddPoints">确认加分</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -161,9 +225,24 @@ const roleFilter = ref('')
 const keyword = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const sortField = ref('')
+const sortOrder = ref('')
 
 const showDialog = ref(false)
 const formRef = ref()
+
+const showPointsDialog = ref(false)
+const selectedUser = ref(null)
+const pointsList = ref([])
+const pointsPage = ref(1)
+const pointsPageSize = ref(10)
+const pointsTotal = ref(0)
+const pointsTotalCount = ref(0)
+const pointsLoading = ref(false)
+
+const showAddPointsDialog = ref(false)
+const addPointsForm = reactive({ points: 10, reason: '' })
+const addingPoints = ref(false)
 
 const defaultForm = () => ({
   id: null, username: '', password: '', name: '', phone: '', email: '',
@@ -190,9 +269,21 @@ async function loadData() {
     })
     list.value = res.data.list
     total.value = res.data.total
+    if (sortField.value === 'total_points') {
+      list.value.sort((a, b) => {
+        const diff = (a.total_points || 0) - (b.total_points || 0)
+        return sortOrder.value === 'ascending' ? diff : -diff
+      })
+    }
   } finally {
     loading.value = false
   }
+}
+
+function handlePointSort({ order }) {
+  sortField.value = 'total_points'
+  sortOrder.value = order
+  if (order) loadData()
 }
 
 function openDialog(row) {
@@ -254,5 +345,72 @@ async function deleteItem(row) {
   } catch(e) {}
 }
 
+function openPointsDialog(row) {
+  selectedUser.value = row
+  pointsPage.value = 1
+  loadPoints()
+  showPointsDialog.value = true
+}
+
+async function loadPoints() {
+  pointsLoading.value = true
+  try {
+    const res = await request.get(`/api/points/user/${selectedUser.value.id}`, {
+      params: { page: pointsPage.value, pageSize: pointsPageSize.value }
+    })
+    pointsList.value = res.data.list
+    pointsTotal.value = res.data.totalPoints
+    pointsTotalCount.value = res.data.total
+  } finally {
+    pointsLoading.value = false
+  }
+}
+
+async function submitAddPoints() {
+  if (!addPointsForm.points) {
+    ElMessage.warning('请填写积分值')
+    return
+  }
+  addingPoints.value = true
+  try {
+    await request.post('/api/points/manual', {
+      userId: selectedUser.value.id,
+      points: addPointsForm.points,
+      reason: addPointsForm.reason
+    })
+    ElMessage.success(`已为「${selectedUser.value.name}」添加 ${addPointsForm.points} 积分`)
+    showAddPointsDialog.value = false
+    addPointsForm.points = 10
+    addPointsForm.reason = ''
+    await loadPoints()
+    await loadData()
+  } finally {
+    addingPoints.value = false
+  }
+}
+
 onMounted(loadData)
 </script>
+
+<style scoped>
+.points-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #fff7e6 0%, #fff1f0 100%);
+  border-radius: 12px;
+}
+.points-card.total .points-label {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+.points-card.total .points-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #d97706;
+}
+.mt-16 { margin-top: 16px; }
+</style>

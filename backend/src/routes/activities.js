@@ -57,9 +57,11 @@ router.get('/:id', auth, (req, res) => {
   activity.is_full = activity.registered_count >= activity.max_participants;
 
   const now = new Date();
+  let justCompleted = false;
   if (activity.status !== 'completed' && activity.end_date && new Date(activity.end_date) < now) {
     db().prepare("UPDATE activities SET status = 'completed' WHERE id = ?").run(req.params.id);
     activity.status = 'completed';
+    justCompleted = true;
     db().prepare(`
       UPDATE equipment_loans
       SET status = 'overdue'
@@ -70,6 +72,29 @@ router.get('/:id', auth, (req, res) => {
       db().prepare("UPDATE activities SET status = 'ongoing' WHERE id = ?").run(req.params.id);
       activity.status = 'ongoing';
     }
+  }
+
+  if (activity.status === 'completed') {
+    const diffPoints = { easy: 10, medium: 15, hard: 20, extreme: 30 };
+    const points = diffPoints[activity.difficulty] || 10;
+    const difficultyText = { easy: '普通活动', medium: '中等活动', hard: '困难活动', extreme: '极限活动' };
+    const regs = db().prepare(`
+      SELECT user_id FROM registrations
+      WHERE activity_id = ? AND status = 'registered'
+    `).all(req.params.id);
+    const pointStmt = db().prepare(`
+      INSERT INTO user_points (user_id, activity_id, points, type, reason)
+      SELECT ?, ?, ?, 'activity', ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_points
+        WHERE user_id = ? AND activity_id = ? AND type = 'activity'
+      )
+    `);
+    regs.forEach(r => {
+      pointStmt.run(r.user_id, req.params.id, points,
+        `参加${difficultyText[activity.difficulty] || '活动'}「${activity.title}」`,
+        r.user_id, req.params.id);
+    });
   }
 
   const registrations = db().prepare(`
@@ -116,7 +141,78 @@ router.get('/:id', auth, (req, res) => {
     ORDER BY up.created_at DESC
   `).all(req.params.id);
 
-  success(res, { activity, registrations, photos, updates });
+  const reviews = db().prepare(`
+    SELECT r.*, u.name as user_name, u.avatar as user_avatar
+    FROM activity_reviews r
+    LEFT JOIN users u ON r.user_id = u.id
+    WHERE r.activity_id = ?
+    ORDER BY r.created_at DESC
+  `).all(req.params.id);
+
+  const avgRating = reviews.length > 0
+    ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1)
+    : 0;
+
+  const userReview = req.user
+    ? reviews.find(r => r.user_id === req.user.id) || null
+    : null;
+
+  success(res, { activity, registrations, photos, updates, reviews, avgRating, userReview });
+});
+
+router.post('/:id/reviews', auth, (req, res) => {
+  const { rating, content } = req.body;
+  const activityId = req.params.id;
+
+  if (!rating || rating < 1 || rating > 5) {
+    return error(res, '评分必须为1-5星');
+  }
+
+  const activity = db().prepare('SELECT * FROM activities WHERE id = ?').get(activityId);
+  if (!activity) {
+    return error(res, '活动不存在', 404);
+  }
+  if (activity.status !== 'completed') {
+    return error(res, '仅已结束的活动可评价');
+  }
+
+  const reg = db().prepare(
+    "SELECT id FROM registrations WHERE activity_id = ? AND user_id = ? AND status = 'registered'"
+  ).get(activityId, req.user.id);
+  if (!reg) {
+    return error(res, '只有参与过该活动的成员才能评价');
+  }
+
+  const existing = db().prepare(
+    'SELECT id FROM activity_reviews WHERE activity_id = ? AND user_id = ?'
+  ).get(activityId, req.user.id);
+
+  if (existing) {
+    db().prepare(`
+      UPDATE activity_reviews SET rating = ?, content = ?, created_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(rating, content || '', existing.id);
+    success(res, null, '评价已更新');
+  } else {
+    db().prepare(`
+      INSERT INTO activity_reviews (activity_id, user_id, rating, content)
+      VALUES (?, ?, ?, ?)
+    `).run(activityId, req.user.id, rating, content || '');
+    success(res, null, '评价已提交');
+  }
+});
+
+router.delete('/:id/reviews/:reviewId', auth, (req, res) => {
+  const review = db().prepare('SELECT * FROM activity_reviews WHERE id = ? AND activity_id = ?')
+    .get(req.params.reviewId, req.params.id);
+  if (!review) {
+    return error(res, '评价不存在', 404);
+  }
+  if (req.user.role !== 'admin' && review.user_id !== req.user.id) {
+    return error(res, '无权限删除此评价', 403);
+  }
+  db().prepare('DELETE FROM activity_reviews WHERE id = ?').run(req.params.reviewId);
+  success(res, null, '评价已删除');
 });
 
 router.post('/', auth, requireAdmin, (req, res) => {

@@ -147,11 +147,37 @@ function createTables() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS user_points (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      activity_id INTEGER,
+      points INTEGER NOT NULL DEFAULT 0,
+      type TEXT NOT NULL DEFAULT 'activity',
+      reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      rating INTEGER NOT NULL DEFAULT 5,
+      content TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(activity_id, user_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_activities_status ON activities(status);
     CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(start_date);
     CREATE INDEX IF NOT EXISTS idx_registrations_activity ON registrations(activity_id);
     CREATE INDEX IF NOT EXISTS idx_loans_status ON equipment_loans(status);
     CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger_records(record_date);
+    CREATE INDEX IF NOT EXISTS idx_points_user ON user_points(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reviews_activity ON activity_reviews(activity_id);
   `);
 }
 

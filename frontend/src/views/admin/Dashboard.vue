@@ -95,7 +95,42 @@
           <div ref="difficultyChart" style="height:280px"></div>
         </div>
       </el-col>
-      <el-col :xs="24" :md="16">
+      <el-col :xs="24" :md="8">
+        <div class="card">
+          <div class="flex-between mb-16">
+            <h3 class="section-title" style="margin:0">🏆 积分排行榜 TOP10</h3>
+          </div>
+          <div v-if="leaderboard.length === 0" style="text-align:center;padding:30px;color:#9ca3af;font-size:13px">
+            暂无积分数据，活动结束后成员将自动获得积分～
+          </div>
+          <div v-else class="leaderboard">
+            <div v-for="(item, idx) in leaderboard" :key="item.id" class="leaderboard-item" :class="{ top: idx < 3 }">
+              <div class="rank-num" :class="['rank-' + (idx + 1)]">
+                <span v-if="idx === 0">🥇</span>
+                <span v-else-if="idx === 1">🥈</span>
+                <span v-else-if="idx === 2">🥉</span>
+                <span v-else>{{ idx + 1 }}</span>
+              </div>
+              <el-avatar :size="38" :style="{ background: idx === 0 ? '#fbbf24' : idx === 1 ? '#9ca3af' : idx === 2 ? '#f59e0b' : '#10b981' }">
+                {{ item.name?.charAt(0) || 'U' }}
+              </el-avatar>
+              <div class="member-info">
+                <div class="member-name">{{ item.name }}</div>
+                <div class="member-stats">
+                  <el-tag size="small" type="info" effect="plain">
+                    📋 {{ item.activity_count || 0 }} 次活动
+                  </el-tag>
+                </div>
+              </div>
+              <div class="member-points">
+                <span class="points-label">积分</span>
+                <span class="points-value">{{ item.total_points || 0 }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-col>
+      <el-col :xs="24" :md="8">
         <div class="card">
           <h3 class="section-title">装备使用排行</h3>
           <el-table :data="equipmentUsage" size="small" border>
@@ -179,6 +214,7 @@ const overview = reactive({
 })
 const activities = ref([])
 const equipmentUsage = ref([])
+const leaderboard = ref([])
 const monthlyChart = ref()
 const financeChart = ref()
 const difficultyChart = ref()
@@ -195,17 +231,19 @@ function statusType(s) { return { upcoming: 'success', ongoing: 'warning', compl
 function statusText(s) { return { upcoming: '即将', ongoing: '进行', completed: '结束', cancelled: '取消' }[s] || '未知' }
 
 async function loadData() {
-  const [ov, act, diff, mon, fin, equ] = await Promise.all([
+  const [ov, act, diff, mon, fin, equ, lb] = await Promise.all([
     request.get('/api/stats/overview'),
     request.get('/api/stats/activities'),
     request.get('/api/stats/difficulty-distribution'),
     request.get('/api/stats/monthly-activities'),
     request.get('/api/stats/monthly-finance'),
-    request.get('/api/stats/equipment-usage')
+    request.get('/api/stats/equipment-usage'),
+    request.get('/api/points/leaderboard', { params: { limit: 10 } })
   ])
   Object.assign(overview, ov.data)
   activities.value = act.data.list
   equipmentUsage.value = equ.data.list
+  leaderboard.value = lb.data.list || []
 
   await nextTick()
   renderMonthly(mon.data.list)
@@ -325,5 +363,75 @@ onMounted(loadData)
   font-weight: 600;
   color: #1f2937;
   margin: 0 0 16px 0;
+}
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.mb-16 {
+  margin-bottom: 16px;
+}
+.leaderboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.leaderboard-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fafafa;
+  border: 1px solid #eef2f7;
+  transition: all 0.2s;
+}
+.leaderboard-item.top {
+  background: linear-gradient(135deg, #fefce8 0%, #fff7ed 100%);
+  border-color: #fde68a;
+}
+.rank-num {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 50%;
+  background: #fff;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+.rank-num.rank-1 { background: #fef3c7; color: #b45309; }
+.rank-num.rank-2 { background: #f3f4f6; color: #4b5563; }
+.rank-num.rank-3 { background: #ffedd5; color: #9a3412; }
+.member-info {
+  flex: 1;
+  min-width: 0;
+}
+.member-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+.member-stats { font-size: 11px; }
+.member-points {
+  text-align: right;
+  flex-shrink: 0;
+}
+.points-label {
+  display: block;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 2px;
+}
+.points-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #d97706;
 }
 </style>
